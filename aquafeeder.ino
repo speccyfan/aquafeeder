@@ -1,3 +1,5 @@
+#aquafeeder version 1.1
+
 #include <Stepper.h>
 #include <EEPROM.h>
 #include <MenuSystem.h>
@@ -15,6 +17,7 @@
 #define LEAP_YEAR(Y)     ( ((1970+Y)>0) && !((1970+Y)%4) && ( ((1970+Y)%100) || !((1970+Y)%400) ) )
 static  const uint8_t monthDays[]={31,28,31,30,31,30,31,31,30,31,30,31}; // API starts
 
+#define MENU_WAIT 300;  //таймаут меню, после которого он вываливается в основной цикл
 // Инициализация пинов часов
 DS1302 rtc(2, 3, 4);
 
@@ -30,29 +33,42 @@ const int Step2Pin = 10;
 const int Step3Pin = 11;
 const int Step4Pin = 12;
 
+const int LightPin = 13;
+
 Stepper motor(100, Step1Pin, Step2Pin, Step3Pin, Step4Pin);
 
-
 int key=0;
-int show_time=1;
-int CurS=0;  //текущий настраиваемый параметр (час/мин/сек)
+byte show_time=1;
+byte CurS=0;  //текущий настраиваемый параметр (час/мин/сек)
 long timestamp;
-long timestamp_eeprom;
+//long timestamp_eeprom;
+long timestamp_day;
+long timestamp_night;
 char k;
-int ArrT[3]; //time
+int ArrT[4]; //time
 int ArrD[3]; //date
 Time t;
-int counter1 = 100;
+Time Dt;
+Time Nt;
 int counter2 = 1;
-int counter3 = 300;
+int counter3 = MENU_WAIT;
 int counter4 = 30; //счетчик выключения подсветки
+byte Flash=0; //мерцаем или не мерцаем выбранным элементом меню
+byte FC=0;    //счетчик для Flash
 int temp1=0;
 int ttemp=0;
+int steps;
+int steps_temp;
 byte thermostat=0;
 byte i;
 byte data[12];
 byte present = 0;
 float celsius = 0;
+byte time_temp; //временная переменная для времени
+byte DayH;    //Час начала дня
+byte DayM;    //Минуты начала дня
+byte NightH;  //Час начала ночи
+byte NightM;  //Минуты начаоа ночи
 
 
 //menu
@@ -62,9 +78,17 @@ MenuItem mm_mi1("Feed Now");
 MenuItem mm_mi2("Time Setup");
 MenuItem mm_mi3("Date Setup");
 MenuItem mm_mi4("Thermostat Setup");
+MenuItem mm_mi5("Feeder Setup");
+MenuItem mm_mi6("Day/Night Setup");
 
 void setup()
 {
+  digitalWrite(LightPin,LOW);
+// Запуск экрана с указанием количества символов и строк
+  lcd.setLED2Pin(HIGH);
+  lcd.begin(16, 2);
+  lcd.clear();
+
 //кнопки  
   pinMode (A0, INPUT);
 
@@ -75,6 +99,8 @@ void setup()
   pinMode(Step4Pin, OUTPUT);
   motor.setSpeed(40);
 
+  pinMode(LightPin, OUTPUT); //свет
+  
  // Запуск часов
   rtc.halt(false);
   rtc.writeProtect(false);
@@ -86,16 +112,29 @@ void setup()
     temp1 = TEMP_EEPROM; 
   }
 
-// Запуск экрана с указанием количества символов и строк
+//читаем установки шагов для кормушки
+steps=EEPROM_int_read(8);
+if (steps <= 0){steps=100;}
 
-  lcd.setLED2Pin(HIGH);
-  lcd.begin(16, 2);
-  lcd.clear();
 
+//читаем настройки дня и ночи
+time_temp=EEPROM_int_read(12);
+if (time_temp >= 0 && time_temp <= 23){DayH = time_temp;}else{DayH=7;}
+time_temp=EEPROM_int_read(13);
+if (time_temp >= 0 && time_temp <= 59){DayM = time_temp;}else{DayM=0;}
+time_temp=EEPROM_int_read(14);
+if (time_temp >= 0 && time_temp <= 23){NightH = time_temp;}else{NightH=21;}
+time_temp=EEPROM_int_read(15);
+if (time_temp >= 0 && time_temp <= 59){NightM = time_temp;}else{NightM=0;}
+
+  
   mm.add_item(&mm_mi1, &feed_now_selected);
   mm.add_item(&mm_mi2, &time_setup_selected);
   mm.add_item(&mm_mi3, &date_setup_selected);
   mm.add_item(&mm_mi4, &thermostat_setup_selected);
+  mm.add_item(&mm_mi5, &feeder_setup_selected);
+  mm.add_item(&mm_mi6, &day_setup_selected);
+  
 //  mm.add_menu(&mu1);
 //  mu1.add_item(&mu1_mi1, &on_item3_selected);
   ms.set_root_menu(&mm);
@@ -127,9 +166,44 @@ void loop(){
          celsius = (float)raw / 16.0;
         }
 
+
+
+//day and night
+
+  t = rtc.getTime();
+  timestamp = getEpochTime(t);
+  get_timestamps();
+
+  //управляем светом и кормушкой
+
+    if ((timestamp >= timestamp_day) && (timestamp < timestamp_night)){ 
+      //наступил день, включаем свет
+      digitalWrite(LightPin,HIGH);
+ 
+      //кормим рыбок утром,через 10 секунд, как включили  
+      if (timestamp - (timestamp_day+10) == 0){
+          feed();        
+      }else if ((timestamp_night-300)-timestamp == 0){
+              //и еще раз за 5 минут до наступление ночи
+          feed();        
+      }
+    }else{    //или все еще ночь
+     digitalWrite(LightPin,LOW);
+     }
+     
+//  k=keyboard();
+//  if (k == 'l'){
+//  lcd.clear();
+//  lcd.setCursor(0, 0);
+//  lcd.print(timestamp);
+//  lcd.setCursor(0, 1);
+//  lcd.print(timestamp_night);
+//  show_time = 0;
+//  }
   
   if (show_time == 1){
     //lcd.clear();
+      //подсветка
       counter2--;
       if (counter2==0){
         if (counter4>0){
@@ -138,27 +212,17 @@ void loop(){
         }else{
               lcd.setLED2Pin(LOW);
         }
-        
-        counter2=10;
-        lcd.setCursor(0, 0); // Устанавливаем курсор для печати времени в верхней строчке
-        lcd.print(rtc.getTimeStr()); // Печатаем время
-        lcd.setCursor(9,0); 
-          
-        lcd.print(celsius);
-        lcd.print((char)223); //celsius simvol
-//          lcd.print("C");
-        lcd.setCursor(3, 1);
-
-        //timestamp = getEpochTime(rtc.getTime());  
-        //lcd.print(timestamp);
-        lcd.print(rtc.getDateStr()); // Печатаем дату
+       counter2=10;
+       lcd.setCursor(0, 0); // Устанавливаем курсор для печати времени в верхней строчке
+       lcd.print(rtc.getTimeStr()); // Печатаем время
+       lcd.setCursor(9,0); 
+       lcd.print(celsius);
+       lcd.print((char)223); //celsius simvol
+//         lcd.print("C");
+       lcd.setCursor(3, 1);
+       lcd.print(rtc.getDateStr()); // Печатаем дату
       }
   }
-
-//проверяем раз в ... секунд
-  counter1--;
-  if (counter1==0){
-    counter1=100;
 
   //thermostat
   if (temp1>0 && celsius >0){ //если в настройках не 0 и датчик выдает больше 0
@@ -175,35 +239,44 @@ void loop(){
       }
   }
 
-  //feeder
-  t = rtc.getTime();
-  int H = t.hour;
-  if ((H == 0) || (H == 8) || (H == 16)){
-  
-      timestamp_eeprom=EEPROMReadlong(0); 
-      timestamp = getEpochTime(t);
-      
-      if (timestamp_eeprom+3600 < timestamp){
-        lcd.clear();
-        lcd.setCursor(4,0);
-        lcd.print("Feed Now!");
-        EEPROMWritelong(0,timestamp);
-        motor.step(100);
-        motor_stop();
-        lcd.clear();
-      }
-    }
-  }  
-  
- 
-  if (keyboard()!=0){
-    show_time=0;
-    }
+     if (keyboard()!=0){show_time=0;}
+    menu();
+   delay (100); // Пауза и все по новой!
+}//end loop
 
-  menu();
-  delay (100); // Пауза и все по новой!
+ //делаем timstamp'ы из настроек дня и ночи
+void get_timestamps(){
+  Dt.year = t.year;
+  Dt.mon = t.mon;
+  Dt.date = t.date;
+  Dt.hour = DayH;
+  Dt.min = DayM;
+  Dt.sec = 0;
+  timestamp_day = getEpochTime(Dt);
+  Nt.year = t.year;
+  Nt.mon = t.mon;
+  Nt.date = t.date;
+  Nt.hour = NightH;
+  Nt.min = NightM;
+  Nt.sec = 0;
+  timestamp_night = getEpochTime(Nt);
 }
 
+void feed(){
+
+      //timestamp_eeprom=EEPROMReadlong(0); 
+      //timestamp = getEpochTime(t);
+      
+      //if (timestamp_eeprom+3600 < timestamp){
+        lcd.clear();
+        lcd.setCursor(4,0);
+        lcd.print("Feed!");
+       //EEPROMWritelong(0,timestamp);
+        motor.step(steps);
+        motor_stop();
+        lcd.clear();
+      //}
+}
 
 void motor_stop(){
   digitalWrite(Step1Pin,0);
@@ -266,7 +339,7 @@ void menu(){
   if (k == 0){
     counter3--;
     if (counter3 == 0){
-       counter3 = 300;
+       counter3 = MENU_WAIT;
        k='c';
     }
   }else{
@@ -302,9 +375,133 @@ void feed_now_selected(MenuItem* p_menu_item)
   lcd.clear();
   lcd.setCursor(4,0);
   lcd.print("Feed Now!");
-  motor.step(100);
+  motor.step(steps);
   motor_stop();
   lcd.clear();
+}
+
+void day_setup_selected(MenuItem* p_menu_item)
+{
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Day/Night setup");
+      ArrT[0]=DayH;
+      ArrT[1]=DayM;
+      ArrT[2]=NightH;
+      ArrT[3]=NightM;
+
+      Flash=0;
+      FC=0;
+  delay(300);
+    while (k!='c'){
+    delay(1);
+    k=keyboard();
+    flash();
+    
+
+    lcd.setCursor(0,1);
+    lcd.print("D:");
+    flashPrint(Flash,0);
+    lcd.print(':');
+    flashPrint(Flash,1);
+    lcd.print(" N:");
+    flashPrint(Flash,2);
+    lcd.print(':');
+    flashPrint(Flash,3);
+  
+    if (k=='u'){incr();}
+    if (k=='d'){decr();}
+
+    if (k=='r'){
+      if (CurS <3){
+        CurS++;
+      }else{
+        CurS=0;
+      }
+     delay(300);
+      }
+    
+    if (k=='l'){
+      if (CurS>0){
+        CurS--;
+      }else{
+        CurS=3;
+      }
+     delay(300);
+    }
+    
+     if (k=='e'){
+       DayH=ArrT[0];
+       DayM=ArrT[1];
+       NightH=ArrT[2];
+       NightM=ArrT[3];
+
+       EEPROM_int_write(12,DayH);
+       EEPROM_int_write(13,DayM);
+       EEPROM_int_write(14,NightH);
+       EEPROM_int_write(15,NightM);
+
+      k='c'; //выход
+    }
+    
+    }
+    }
+
+
+void feeder_setup_selected(MenuItem* p_menu_item)
+{
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Motor steps:");
+  delay(300);
+  steps_temp=steps;
+  
+  while (k!='c'){
+    delay(1);
+    k=keyboard();
+    
+    if (k=='e'){
+     steps=steps_temp;
+     EEPROM_int_write(8,steps_temp);
+     k='c'; //выход
+    }
+    
+    if (k=='u'){incrSteps();}
+    if (k=='d'){decrSteps();}
+    if (k=='r'){incr100Steps();}
+    if (k=='l'){decr100Steps();}
+
+      lcd.setCursor(0,1);
+      lcd.print(steps_temp);
+      lcd.print("  ");
+}
+}
+
+void incrSteps(){
+  if (steps<1000){
+    steps_temp++;
+  }
+  delay(200);
+}
+void decrSteps(){
+  if (steps_temp>0){
+    steps_temp--;
+  }
+  delay(200);
+}
+void incr100Steps(){
+  if (steps<1000){
+    steps_temp=steps_temp+100;
+    if (steps_temp>1000){steps_temp=1000;}
+  }
+  delay(200);
+}
+void decr100Steps(){
+  if (steps_temp>0){
+    steps_temp=steps_temp-100;
+    if (steps_temp<0){steps_temp=0;}
+  }
+  delay(200);
 }
 
 void thermostat_setup_selected(MenuItem* p_menu_item)
@@ -347,26 +544,11 @@ void decrTemp(){
   delay(200);
 }
 
-//Date setup
-void date_setup_selected(MenuItem* p_menu_item)
-{
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Date setup");
-  delay (300);
-  int Flash=0; //или рисуем цифры или пробелы, мерцание выбранного элемента
-  int FC=0;    //счетчик для flash
-  t = rtc.getTime();
-  ArrD[0]=t.date;
-  ArrD[1]=t.mon;
-  ArrD[2]=t.year;
-  
-  while (k!='c'){
-    delay(1);
-    k=keyboard();
+
+void flash(){
     //flash
     FC++;
-    if (FC == 30){
+    if (FC == 25){
       if (Flash == 0){
         Flash=1;
       }else{
@@ -377,8 +559,28 @@ void date_setup_selected(MenuItem* p_menu_item)
     if (k!=0){
       Flash=1;
     }
-
     //end flash
+}
+
+//Date setup
+void date_setup_selected(MenuItem* p_menu_item)
+{
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Date setup");
+  delay (300);
+  Flash=0; //или рисуем цифры или пробелы, мерцание выбранного элемента
+  FC=0;    //счетчик для flash
+  t = rtc.getTime();
+  ArrD[0]=t.date;
+  ArrD[1]=t.mon;
+  ArrD[2]=t.year;
+  
+  while (k!='c'){
+    delay(1);
+    k=keyboard();
+    flash();    
+    
     lcd.setCursor(0,1);    
     flashPrintDate(Flash,0);
     lcd.print('.');
@@ -420,8 +622,8 @@ void time_setup_selected(MenuItem* p_menu_item)
   lcd.setCursor(0,0);
   lcd.print("Time setup");
   delay (300);
-  int Flash=0; //или рисуем цифры или пробелы, мерцание выбранного элемента
-  int FC=0;    //счетчик для flash
+  Flash=0; //или рисуем цифры или пробелы, мерцание выбранного элемента
+  FC=0;    //счетчик для flash
 
   t = rtc.getTime();
   ArrT[0]=t.hour;
@@ -431,21 +633,7 @@ void time_setup_selected(MenuItem* p_menu_item)
   while (k!='c'){
     delay(1);
     k=keyboard();
-    
-    //flash
-    FC++;
-    if (FC == 30){
-      if (Flash == 0){
-        Flash=1;
-      }else{
-        Flash=0;
-      }
-    FC=0;
-    }
-    if (k!=0){
-      Flash=1;
-    }
-    //end flash
+    flash();
     
     lcd.setCursor(0,1);    
     flashPrint(Flash,0);
@@ -512,7 +700,7 @@ void flashPrintDate(int Flash, int CT){
 //функция увеличивает выбранный элемент на 1
 void incr(){
   int limit=59;
-  if (CurS==0){
+  if (CurS==0 || CurS==2){
       limit=23;
   }
   
@@ -526,7 +714,7 @@ void incr(){
 //функция уменьшает выбранный элемент на 1 для даты
 void decr(){
   int limit=59;
-  if (CurS==0){
+  if (CurS==0 || CurS==2){
    limit=23;
   }  
   if (ArrT[CurS] > 0){
@@ -570,7 +758,6 @@ void decrD(){
   }
   delay(200);
 }
-
 
 //timestamp
 uint32_t getEpochTime(Time tm){  
@@ -617,7 +804,6 @@ unsigned int EEPROM_int_read(int p_address)
   byte highByte = EEPROM.read(p_address + 1);
   return ((lowByte << 0) & 0xFF) + ((highByte << 8) & 0xFF00);
 }
-
 
 //eeprom long int
 void EEPROMWritelong(int address, long value)
