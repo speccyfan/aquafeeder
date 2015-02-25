@@ -1,4 +1,4 @@
-#aquafeeder version 1.1
+//aquafeeder version 1.1
 
 #include <Stepper.h>
 #include <EEPROM.h>
@@ -229,12 +229,12 @@ void loop(){
       if (thermostat == 0){
         if (celsius<temp1-1){
           thermostat = 1;
-          lcd.setLED1Pin(LOW); //вкл
+          lcd.setLED1Pin(HIGH); //вкл
         }
       }else{
         if (celsius>temp1+1){
           thermostat = 0;
-          lcd.setLED1Pin(HIGH); //выкл
+          lcd.setLED1Pin(LOW); //выкл
         }
       }
   }
