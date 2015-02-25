@@ -1,7 +1,8 @@
+
 $fn=50;
 
 //основа
-translate([0,5,-23]){
+translate([0,5,-24]){
 translate([-4,0,2])rotate([180,90,0])cylinder(h=50,r=2);
 translate([54,0,2])rotate([180,90,0])cylinder(h=50,r=2);
 
@@ -16,6 +17,8 @@ hull(){
 }
 }
 
+
+
 difference(){
 	union(){
 		//большой конус
@@ -25,7 +28,7 @@ difference(){
 		
 		//нижний конус
 		hull(){
-			translate([0,0,-21])cylinder(h=1,r=7);
+			translate([0,0,-22])cylinder(h=1,r=7);
 			translate([0,0,0])cylinder(h=1,r=5);}
 
 		//цилиндр корпус
@@ -46,7 +49,7 @@ difference(){
 	//малая конусная выемка
 
 	hull(){
-	translate([0,0,-21])cylinder(h=1,r=5);
+	translate([0,0,-22])cylinder(h=1,r=5);
 	translate([0,0,0])cylinder(h=1,r=3.9);
 	}
 
@@ -66,9 +69,9 @@ difference(){
 	hull(){
 		cylinder(r=5,h=2);
 		translate([50,0,0])cylinder(r=5,h=2);
-		translate([25,0,0])cylinder(r=21,h=2);
+		translate([25,0,])cylinder(r=21,h=2);
 
-		cube([50,21,2]);
+		cube([50,22,2]);
 
 	}
 		cylinder(r=3,h=5);
