@@ -19,7 +19,7 @@ static  const uint8_t monthDays[]={31,28,31,30,31,30,31,31,30,31,30,31}; // API 
 
 #define MENU_WAIT 300;  //таймаут меню, после которого он вываливается в основной цикл
 // Инициализация пинов часов
-DS1302 rtc(2, 3, 4);
+DS1302 rtc(4, 3, 2);
 
 //датчик температуры
 OneWire  ds(5);
@@ -33,7 +33,7 @@ const int Step2Pin = 10;
 const int Step3Pin = 11;
 const int Step4Pin = 12;
 
-const int LightPin = 13;
+const int LightPin = 0;
 
 Stepper motor(100, Step1Pin, Step2Pin, Step3Pin, Step4Pin);
 
@@ -90,7 +90,7 @@ void setup()
   lcd.clear();
 
 //кнопки  
-  pinMode (A0, INPUT);
+  pinMode (A5, INPUT);
 
 //шаговик
   pinMode(Step1Pin, OUTPUT);
